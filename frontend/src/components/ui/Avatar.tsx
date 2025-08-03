@@ -2,7 +2,7 @@ import React from 'react';
 import { cn, getInitials, getAvatarColor } from '@/lib/utils';
 
 interface AvatarProps {
-  name: string;
+  name?: string | null;
   src?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;

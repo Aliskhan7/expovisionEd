@@ -9,6 +9,7 @@ const ReactPlayer = dynamic(() => import('react-player'), { ssr: false });
 import { X, Clock, FileText, Maximize, Check } from 'lucide-react';
 import { Lesson } from '@/types';
 import { useCoursesStore } from '@/store/courses';
+import LessonChat from './LessonChat';
 
 interface LessonModalProps {
   isOpen: boolean;
@@ -213,22 +214,33 @@ export default function LessonModal({ isOpen, onClose, lesson, courseTitle, cour
                     </div>
                   </div>
 
-                  {/* Lesson Details */}
-                  <div className="lg:col-span-1">
+                  {/* Lesson Details and Chat */}
+                  <div className="lg:col-span-1 space-y-4">
+                    {/* Lesson Description */}
                     <div className="bg-gray-50 rounded-lg p-4">
                       <h4 className="font-semibold text-gray-900 mb-3">Описание урока</h4>
                       
                       {lesson.transcript ? (
                         <div className="prose prose-sm max-w-none text-gray-700">
-                          <p className="whitespace-pre-wrap">{lesson.transcript}</p>
+                          <p className="whitespace-pre-wrap text-sm">{lesson.transcript}</p>
                         </div>
                       ) : (
-                        <p className="text-gray-500 italic">Описание урока пока недоступно</p>
+                        <p className="text-gray-500 italic text-sm">Описание урока пока недоступно</p>
                       )}
                     </div>
 
+                    {/* Lesson Chat */}
+                    {courseId && (
+                      <LessonChat
+                        lessonId={lesson.id}
+                        courseId={courseId}
+                        lessonTitle={lesson.title}
+                        courseTitle={courseTitle || ''}
+                      />
+                    )}
+
                     {/* Lesson Navigation */}
-                    <div className="mt-4 space-y-3">
+                    <div className="space-y-3">
                       {!isCompleted ? (
                         <button
                           onClick={handleCompleteLesson}

@@ -88,13 +88,50 @@ export interface ChatMessage {
   sender: 'user' | 'assistant';
   content: string;
   thread_id: string;
-  metadata?: Record<string, any>;
+  course_id?: number;
+  lesson_id?: number;
+  message_data?: Record<string, any>;
   created_at: string;
 }
 
 export interface ChatThread {
   thread_id: string;
   created_at: string;
+}
+
+export interface LessonChatHistoryResponse {
+  messages: ChatMessage[];
+  lesson_title: string;
+  course_title: string;
+  total_course_messages: number;
+}
+
+export interface LessonChatMessageCreate {
+  content: string;
+  lesson_id: number;
+  course_id: number;
+}
+
+// Personal Chat types
+export interface PersonalChat {
+  id: number;
+  user_id: number;
+  title: string;
+  thread_id: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+  last_message_at?: string;
+}
+
+export interface PersonalChatCreate {
+  title?: string;
+}
+
+export interface PersonalChatUpdate {
+  title?: string;
+  is_active?: boolean;
 }
 
 // API Response types

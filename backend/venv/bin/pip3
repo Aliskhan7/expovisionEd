@@ -1,4 +1,4 @@
-#!/Users/aliskhangazamatov/Desktop/Projects/expovision-ed-v2/backend/venv/bin/python3
+#!/Users/Mansur/Desktop/expovisioned/expovisionEd/backend/venv/bin/python3.13
 # -*- coding: utf-8 -*-
 import re
 import sys

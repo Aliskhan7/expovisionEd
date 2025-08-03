@@ -6,6 +6,7 @@ from .lesson import Lesson
 from .user_course_progress import UserCourseProgress
 from .user_lesson_progress import UserLessonProgress
 from .chat_message import ChatMessage
+from .personal_chat import PersonalChat
 
 __all__ = [
     "User",
@@ -13,6 +14,7 @@ __all__ = [
     "Lesson",
     "UserCourseProgress",
     "UserLessonProgress",
-    "ChatMessage"
+    "ChatMessage",
+    "PersonalChat"
 ]
 

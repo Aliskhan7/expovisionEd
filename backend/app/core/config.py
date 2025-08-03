@@ -33,7 +33,9 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:8000",
-        "http://127.0.0.1:8000"
+        "http://127.0.0.1:8000",
+        "http://localhost",  # For nginx proxy
+        "http://127.0.0.1",  # For nginx proxy
     ]
     
     # OpenAI

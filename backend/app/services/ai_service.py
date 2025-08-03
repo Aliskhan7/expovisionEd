@@ -22,7 +22,10 @@ class AIService:
     def __init__(self):
         self.client = OpenAI(
             api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_API_BASE
+            base_url=settings.OPENAI_API_BASE,
+            default_headers={
+                "OpenAI-Beta": "assistants=v2"
+            }
         )
         self.assistant_id = None
         self._initialize_assistant()
@@ -96,11 +99,11 @@ class AIService:
             print(f"❌ Error creating assistant: {e}")
             raise
     
-    def create_thread(self, user_id: int) -> Optional[str]:
+    def create_thread(self, user_id: int, lesson_id: Optional[int] = None) -> Optional[str]:
         """Create a new conversation thread"""
         try:
             thread = self.client.beta.threads.create()
-            print(f"✅ Created thread {thread.id} for user {user_id}")
+            print(f"✅ Created thread {thread.id} for user {user_id}, lesson {lesson_id}")
             return thread.id
         except Exception as e:
             print(f"❌ Error creating thread: {e}")
@@ -157,6 +160,144 @@ class AIService:
             print(f"❌ Error running assistant: {e}")
             return "Извините, произошла ошибка при обработке вашего запроса."
     
+    def _get_lesson_context(self, lesson_id: int, db: Session) -> str:
+        """Get lesson context for AI assistant"""
+        try:
+            lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
+            if not lesson:
+                return ""
+            
+            course = db.query(Course).filter(Course.id == lesson.course_id).first()
+            context = f"КОНТЕКСТ УРОКА:\n"
+            context += f"Курс: {course.title if course else 'Неизвестный курс'}\n"
+            context += f"Урок: {lesson.title}\n"
+            
+            if lesson.transcript:
+                context += f"Содержание урока:\n{lesson.transcript}\n"
+            else:
+                context += "Содержание урока: Транскрипт урока не предоставлен\n"
+            
+            context += f"Длительность: {lesson.duration or 0} секунд\n"
+            context += "\nОтвечай на вопросы студента основываясь на этом содержании урока."
+            
+            return context
+            
+        except Exception as e:
+            print(f"❌ Error getting lesson context: {e}")
+            return ""
+    
+    def _get_course_chat_history(self, user_id: int, course_id: int, db: Session, limit: int = 10) -> List[Dict]:
+        """Get recent chat history for the course to maintain context"""
+        try:
+            messages = db.query(ChatMessage).filter(
+                ChatMessage.user_id == user_id,
+                ChatMessage.course_id == course_id
+            ).order_by(ChatMessage.created_at.desc()).limit(limit).all()
+            
+            history = []
+            for msg in reversed(messages):  # Reverse to get chronological order
+                history.append({
+                    "role": "user" if msg.sender == "user" else "assistant",
+                    "content": msg.content
+                })
+            
+            return history
+            
+        except Exception as e:
+            print(f"❌ Error getting course chat history: {e}")
+            return []
+
+    async def send_lesson_message(
+        self, 
+        user: User, 
+        message: str, 
+        lesson_id: int,
+        course_id: int,
+        db: Session
+    ) -> Dict[str, Any]:
+        """Send message to AI assistant with lesson context and course memory"""
+        try:
+            # Get lesson context
+            lesson_context = self._get_lesson_context(lesson_id, db)
+            
+            # Get course chat history for context
+            course_history = self._get_course_chat_history(user.id, course_id, db)
+            
+            # Create thread ID for this lesson if user doesn't have one
+            thread_id = f"lesson_{lesson_id}_user_{user.id}"
+            
+            # Create a contextual message with lesson info and course history
+            contextual_message = f"{lesson_context}\n\nИСТОРИЯ ЧАТА ПО КУРСУ:\n"
+            
+            # Add recent course history
+            for hist_msg in course_history[-5:]:  # Last 5 messages for context
+                role_name = "Студент" if hist_msg["role"] == "user" else "Преподаватель"
+                contextual_message += f"{role_name}: {hist_msg['content']}\n"
+            
+            contextual_message += f"\nВОПРОС СТУДЕНТА: {message}"
+            
+            # Use OpenAI Chat Completions API directly for better control
+            try:
+                completion = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {
+                            "role": "system", 
+                            "content": """Ты - дружелюбный AI-преподаватель платформы ExpoVisionED. 
+                            Отвечай на вопросы студентов по материалам уроков, используя предоставленный контекст.
+                            Помни предыдущие разговоры по курсу и связывай новые вопросы с ранее изученным материалом.
+                            Всегда отвечай на русском языке дружелюбно и профессионально."""
+                        },
+                        {"role": "user", "content": contextual_message}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+                
+                ai_response = completion.choices[0].message.content
+                
+            except Exception as e:
+                print(f"❌ Error with OpenAI completion: {e}")
+                ai_response = "Извините, произошла ошибка при обработке вашего запроса. Попробуйте еще раз."
+            
+            # Save user message to database
+            user_message = ChatMessage(
+                user_id=user.id,
+                course_id=course_id,
+                lesson_id=lesson_id,
+                thread_id=thread_id,
+                sender="user",
+                content=message
+            )
+            db.add(user_message)
+            db.commit()
+            
+            # Save AI response to database
+            assistant_message = ChatMessage(
+                user_id=user.id,
+                course_id=course_id,
+                lesson_id=lesson_id,
+                thread_id=thread_id,
+                sender="assistant",
+                content=ai_response,
+                message_data={"model": "gpt-3.5-turbo", "lesson_context": True}
+            )
+            db.add(assistant_message)
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": ai_response,
+                "message_id": assistant_message.id
+            }
+            
+        except Exception as e:
+            print(f"❌ Error in send_lesson_message: {e}")
+            return {
+                "success": False,
+                "message": "Произошла ошибка при обработке сообщения"
+            }
+
     def upload_course_materials(self, db: Session) -> bool:
         """Upload course materials to assistant for knowledge base"""
         try:
@@ -241,7 +382,9 @@ class AIService:
         self, 
         user: User, 
         message: str, 
-        db: Session
+        db: Session,
+        course_id: Optional[int] = None,
+        lesson_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """Send message to AI assistant and get response"""
         try:
@@ -261,6 +404,8 @@ class AIService:
             # Save user message to database
             user_message = ChatMessage(
                 user_id=user.id,
+                course_id=course_id,
+                lesson_id=lesson_id,
                 thread_id=thread_id,
                 sender="user",
                 content=message
@@ -281,10 +426,12 @@ class AIService:
             # Save AI response to database
             assistant_message = ChatMessage(
                 user_id=user.id,
+                course_id=course_id,
+                lesson_id=lesson_id,
                 thread_id=thread_id,
                 sender="assistant",
                 content=ai_response,
-                metadata={"model": "gpt-3.5-turbo"}
+                message_data={"model": "gpt-3.5-turbo"}
             )
             db.add(assistant_message)
             db.commit()
@@ -300,6 +447,344 @@ class AIService:
             return {
                 "success": False,
                 "message": "Произошла ошибка при обработке сообщения"
+            }
+
+    def _get_user_progress_context(self, user: User, db: Session) -> str:
+        """Get user progress context for personal assistant"""
+        from app.models.user_course_progress import UserCourseProgress
+        from app.models.user_lesson_progress import UserLessonProgress
+        from app.models.course import Course
+        from app.models.lesson import Lesson
+        
+        # Get user's enrolled courses
+        enrolled_courses = db.query(Course).join(
+            UserCourseProgress
+        ).filter(UserCourseProgress.user_id == user.id).all()
+        
+        progress_context = f"ИНФОРМАЦИЯ О СТУДЕНТЕ:\n"
+        progress_context += f"Имя: {user.name}\n"
+        progress_context += f"Email: {user.email}\n\n"
+        
+        if not enrolled_courses:
+            progress_context += "СТАТУС: Студент пока не записан ни на один курс.\n"
+            return progress_context
+            
+        progress_context += f"ЗАПИСАН НА КУРСЫ ({len(enrolled_courses)}):\n"
+        
+        for course in enrolled_courses:
+            # Get course progress
+            course_progress = db.query(UserCourseProgress).filter(
+                UserCourseProgress.user_id == user.id,
+                UserCourseProgress.course_id == course.id
+            ).first()
+            
+            # Get all lessons in course
+            total_lessons = db.query(Lesson).filter(Lesson.course_id == course.id).count()
+            
+            # Get completed lessons
+            completed_lessons = db.query(UserLessonProgress).join(Lesson).filter(
+                UserLessonProgress.user_id == user.id,
+                UserLessonProgress.completed == True,
+                Lesson.course_id == course.id
+            ).count()
+            
+            completion_rate = (completed_lessons / total_lessons * 100) if total_lessons > 0 else 0
+            
+            progress_context += f"\n📚 {course.title}\n"
+            progress_context += f"   Прогресс: {completed_lessons}/{total_lessons} уроков ({completion_rate:.1f}%)\n"
+            
+            if course_progress:
+                progress_context += f"   Начат: {course_progress.created_at.strftime('%d.%m.%Y')}\n"
+                if course_progress.completed_at:
+                    progress_context += f"   Завершен: {course_progress.completed_at.strftime('%d.%m.%Y')}\n"
+                else:
+                    progress_context += f"   Статус: В процессе изучения\n"
+        
+        return progress_context
+
+    def _get_user_learning_insights(self, user: User, db: Session) -> str:
+        """Analyze user's learning patterns from lesson chats"""
+        
+        # Get recent chat messages from lessons
+        recent_messages = db.query(ChatMessage).filter(
+            ChatMessage.user_id == user.id,
+            ChatMessage.lesson_id.isnot(None),
+            ChatMessage.sender == 'user'
+        ).order_by(ChatMessage.created_at.desc()).limit(20).all()
+        
+        if not recent_messages:
+            return "\nАНАЛИЗ ОБУЧЕНИЯ: Пока нет данных о взаимодействии с уроками.\n"
+        
+        insights = "\nАНАЛИЗ ОБУЧЕНИЯ:\n"
+        
+        # Analyze question patterns
+        question_topics = []
+        for msg in recent_messages:
+            if any(word in msg.content.lower() for word in ['как', 'что', 'почему', 'зачем', 'когда']):
+                question_topics.append(msg.content[:100])
+        
+        if question_topics:
+            insights += f"Часто задаваемые вопросы ({len(question_topics)} последних):\n"
+            for i, topic in enumerate(question_topics[-3:], 1):  # Show last 3
+                insights += f"{i}. {topic}...\n"
+        
+        # Get lessons where user was most active
+        from sqlalchemy import func
+        lesson_activity = db.query(
+            Lesson.title,
+            func.count(ChatMessage.id).label('message_count')
+        ).join(ChatMessage, Lesson.id == ChatMessage.lesson_id).filter(
+            ChatMessage.user_id == user.id,
+            ChatMessage.sender == 'user'
+        ).group_by(Lesson.id, Lesson.title).order_by(
+            func.count(ChatMessage.id).desc()
+        ).limit(3).all()
+        
+        if lesson_activity:
+            insights += f"\nНаиболее активные уроки:\n"
+            for lesson_title, msg_count in lesson_activity:
+                insights += f"• {lesson_title}: {msg_count} вопросов\n"
+        
+        return insights
+
+    async def send_personal_assistant_message(
+        self, 
+        user: User, 
+        message: str, 
+        db: Session
+    ) -> Dict[str, Any]:
+        """Send message to personal AI assistant"""
+        
+        # Generate unique thread ID for personal assistant
+        thread_id = f"personal_assistant_user_{user.id}"
+        
+        # Get user progress context
+        progress_context = self._get_user_progress_context(user, db)
+        learning_insights = self._get_user_learning_insights(user, db)
+        
+        # Get recent personal assistant chat history
+        recent_chat = db.query(ChatMessage).filter(
+            ChatMessage.user_id == user.id,
+            ChatMessage.thread_id == thread_id,
+            ChatMessage.course_id.is_(None),  # Personal assistant messages have no course_id
+            ChatMessage.lesson_id.is_(None)   # Personal assistant messages have no lesson_id
+        ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+        
+        # Build context message
+        contextual_message = f"""ПЕРСОНАЛЬНЫЙ AI-АССИСТЕНТ
+{progress_context}
+{learning_insights}
+
+ПОСЛЕДНИЕ СООБЩЕНИЯ В ЛИЧНОМ ЧАТЕ:
+"""
+        
+        for msg in reversed(recent_chat[-5:]):  # Last 5 messages in chronological order
+            role_name = "Студент" if msg.sender == "user" else "Ассистент"
+            contextual_message += f"{role_name}: {msg.content}\n"
+        
+        contextual_message += f"\nНОВОЕ СООБЩЕНИЕ СТУДЕНТА: {message}"
+        
+        try:
+            # Use Chat Completions API for personal assistant
+            completion = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": """Ты - персональный AI-ассистент для обучения на платформе ExpoVisionED. У тебя есть полная информация о прогрессе студента, его курсах, пройденных уроках и активности.
+
+ТВОЯ ЗАДАЧА:
+- Анализировать прогресс студента и давать конкретные рекомендации
+- Помогать с планированием обучения
+- Мотивировать к продолжению изучения курсов
+- Отвечать на вопросы о контенте курсов
+- Предлагать оптимальные стратегии обучения
+
+СТРОГИЕ ПРАВИЛА ОБЩЕНИЯ:
+- НИКОГДА не используй слова "Привет", "Здравствуй" или любые приветствия в ответах
+- НИКОГДА не говори "рад видеть" или подобные фразы
+- СРАЗУ переходи к сути вопроса
+- Если история чата пустая, просто представь свои возможности БЕЗ приветствия
+- Будь конкретным и полезным
+- Анализируй данные и давай персональные советы
+- Отвечай кратко, но информативно
+
+НЕПРАВИЛЬНО: "Привет! Рад видеть твой интерес к обучению..."
+ПРАВИЛЬНО: "После анализа твоего прогресса на курсе..."
+
+ТВОИ ВОЗМОЖНОСТИ:
+- Видишь все курсы студента и прогресс по ним
+- Знаешь какие уроки пройдены, а какие нет
+- Анализируешь вопросы из урочных чатов
+- Можешь определить сложные темы для студента
+- Предлагаешь персональный план развития
+
+Отвечай на русском языке. Будь наставником, а не просто чат-ботом! ЗАПОМНИ: никаких приветствий!"""
+                    },
+                    {"role": "user", "content": contextual_message}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            ai_response = completion.choices[0].message.content
+            
+            # Save user message
+            user_message = ChatMessage(
+                user_id=user.id,
+                thread_id=thread_id,
+                sender="user",
+                content=message,
+                course_id=None,  # Personal assistant has no course
+                lesson_id=None,  # Personal assistant has no lesson
+                message_data={"type": "personal_assistant"}
+            )
+            db.add(user_message)
+            db.flush()
+            
+            # Save assistant response
+            assistant_message = ChatMessage(
+                user_id=user.id,
+                thread_id=thread_id,
+                sender="assistant",
+                content=ai_response,
+                course_id=None,  # Personal assistant has no course
+                lesson_id=None,  # Personal assistant has no lesson
+                message_data={"type": "personal_assistant", "model": "gpt-3.5-turbo"}
+            )
+            db.add(assistant_message)
+            db.commit()
+            
+            return {
+                "success": True, 
+                "message": ai_response, 
+                "message_id": assistant_message.id
+            }
+            
+        except Exception as e:
+            db.rollback()
+            print(f"❌ Error in personal assistant: {str(e)}")
+            return {
+                "success": False, 
+                "error": str(e)
+            }
+
+    async def send_personal_assistant_message_to_thread(
+        self, 
+        user: User, 
+        message: str, 
+        thread_id: str,
+        db: Session
+    ) -> Dict[str, Any]:
+        """Send message to personal assistant using specific thread_id"""
+        
+        try:
+            # Get user progress and learning insights
+            progress_context = self._get_user_progress_context(user, db)
+            learning_insights = self._get_user_learning_insights(user, db)
+            
+            # Get recent chat history for this specific thread
+            recent_chat = db.query(ChatMessage).filter(
+                ChatMessage.user_id == user.id,
+                ChatMessage.thread_id == thread_id,
+                ChatMessage.course_id.is_(None),
+                ChatMessage.lesson_id.is_(None)
+            ).order_by(ChatMessage.created_at.desc()).limit(10).all()
+            
+            # Build context message
+            contextual_message = f"""ПЕРСОНАЛЬНЫЙ AI-АССИСТЕНТ
+{progress_context}
+{learning_insights}
+
+ПОСЛЕДНИЕ СООБЩЕНИЯ В ЭТОМ ЧАТЕ:
+"""
+            
+            for msg in reversed(recent_chat[-5:]):  # Last 5 messages in chronological order
+                role_name = "Студент" if msg.sender == "user" else "Ассистент"
+                contextual_message += f"{role_name}: {msg.content}\n"
+            
+            contextual_message += f"\nНОВОЕ СООБЩЕНИЕ СТУДЕНТА: {message}"
+            
+            # Use Chat Completions API for personal assistant
+            completion = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system", 
+                        "content": """Ты - персональный AI-ассистент для обучения на платформе ExpoVisionED. У тебя есть полная информация о прогрессе студента, его курсах, пройденных уроках и активности.
+
+ТВОЯ ЗАДАЧА:
+- Анализировать прогресс студента и давать конкретные рекомендации
+- Помогать с планированием обучения
+- Мотивировать к продолжению изучения курсов
+- Отвечать на вопросы о контенте курсов
+- Предлагать оптимальные стратегии обучения
+
+СТРОГИЕ ПРАВИЛА ОБЩЕНИЯ:
+- НИКОГДА не используй слова "Привет", "Здравствуй" или любые приветствия в ответах
+- НИКОГДА не говори "рад видеть" или подобные фразы
+- СРАЗУ переходи к сути вопроса
+- Если история чата пустая, просто представь свои возможности БЕЗ приветствия
+- Будь конкретным и полезным
+- Анализируй данные и давай персональные советы
+- Отвечай кратко, но информативно
+
+НЕПРАВИЛЬНО: "Привет! Рад видеть твой интерес к обучению..."
+ПРАВИЛЬНО: "После анализа твоего прогресса на курсе..."
+
+ТВОИ ВОЗМОЖНОСТИ:
+- Видишь все курсы студента и прогресс по ним
+- Знаешь какие уроки пройдены, а какие нет
+- Анализируешь вопросы из урочных чатов
+- Можешь определить сложные темы для студента
+- Предлагаешь персональный план развития
+
+Отвечай на русском языке. Будь наставником, а не просто чат-ботом! ЗАПОМНИ: никаких приветствий!"""
+                    },
+                    {"role": "user", "content": contextual_message}
+                ],
+                temperature=0.7,
+                max_tokens=1000
+            )
+            
+            ai_response = completion.choices[0].message.content
+            
+            # Save user message
+            user_message = ChatMessage(
+                user_id=user.id,
+                thread_id=thread_id,
+                sender="user",
+                content=message,
+                course_id=None,  # Personal assistant messages have no course_id
+                lesson_id=None   # Personal assistant messages have no lesson_id
+            )
+            db.add(user_message)
+            db.flush()  # Get the ID
+            
+            # Save assistant message
+            assistant_message = ChatMessage(
+                user_id=user.id,
+                thread_id=thread_id,
+                sender="assistant",
+                content=ai_response,
+                course_id=None,  # Personal assistant messages have no course_id
+                lesson_id=None   # Personal assistant messages have no lesson_id
+            )
+            db.add(assistant_message)
+            db.commit()
+            
+            return {
+                "success": True, 
+                "message": ai_response, 
+                "message_id": assistant_message.id
+            }
+            
+        except Exception as e:
+            db.rollback()
+            print(f"❌ Error in personal assistant thread: {str(e)}")
+            return {
+                "success": False, 
+                "error": str(e)
             }
 
 

@@ -1,5 +1,8 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
-import { AuthTokens, User, Course, Lesson, ChatMessage, UserLogin, UserRegister } from '@/types';
+import { 
+  AuthTokens, User, Course, Lesson, ChatMessage, UserLogin, UserRegister,
+  PersonalChat, PersonalChatCreate, PersonalChatUpdate
+} from '@/types';
 
 class ApiClient {
   private client: AxiosInstance;
@@ -11,7 +14,9 @@ class ApiClient {
   }> = [];
 
   constructor() {
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // If NEXT_PUBLIC_API_URL is empty, use relative paths (nginx will proxy)
+    // Otherwise use the provided URL (for development)
+    this.baseURL = process.env.NEXT_PUBLIC_API_URL || '';
     
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -346,6 +351,39 @@ class ApiClient {
     return response.data;
   }
 
+  // Lesson Chat endpoints
+  async getLessonChatHistory(lessonId: number): Promise<{
+    messages: ChatMessage[];
+    lesson_title: string;
+    course_title: string;
+    total_course_messages: number;
+  }> {
+    const response = await this.client.get(`/api/chat/lesson/${lessonId}/history`);
+    return response.data;
+  }
+
+  async sendLessonMessage(lessonId: number, data: {
+    content: string;
+    lesson_id: number;
+    course_id: number;
+  }): Promise<ChatMessage> {
+    const response = await this.client.post<ChatMessage>(`/api/chat/lesson/${lessonId}/message`, data);
+    return response.data;
+  }
+
+  // Personal Assistant (Jarvis) methods
+  async getPersonalAssistantHistory(limit: number = 50): Promise<ChatMessage[]> {
+    const response = await this.client.get<ChatMessage[]>('/api/chat/personal/history', {
+      params: { limit }
+    });
+    return response.data;
+  }
+
+  async sendPersonalAssistantMessage(content: string): Promise<ChatMessage> {
+    const response = await this.client.post<ChatMessage>('/api/chat/personal/message', { content });
+    return response.data;
+  }
+
   // Admin endpoints
   async getAdminStats(): Promise<any> {
     const response = await this.client.get('/api/admin/dashboard-stats');
@@ -427,9 +465,26 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<{ status: string; service: string }> {
+  async healthCheck(): Promise<{ status: string }> {
     const response = await this.client.get('/health');
     return response.data;
+  }
+
+  // Debug method to test API connection
+  async testConnection(): Promise<{ success: boolean; baseURL: string; error?: string }> {
+    try {
+      await this.healthCheck();
+      return { 
+        success: true, 
+        baseURL: this.baseURL || 'relative paths' 
+      };
+    } catch (error) {
+      return { 
+        success: false, 
+        baseURL: this.baseURL || 'relative paths',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
   }
 
   // Course access management
@@ -452,30 +507,74 @@ class ApiClient {
     const response = await this.client.delete(`/api/admin/revoke-course-access?user_id=${userId}&course_id=${courseId}`);
     return response.data;
   }
+
+  // Personal Chats Management
+  async getPersonalChats(): Promise<PersonalChat[]> {
+    const response = await this.client.get<PersonalChat[]>('/api/chat/personal/chats');
+    return response.data;
+  }
+
+  async createPersonalChat(chatData?: PersonalChatCreate): Promise<PersonalChat> {
+    const response = await this.client.post<PersonalChat>('/api/chat/personal/chats', chatData || {});
+    return response.data;
+  }
+
+  async updatePersonalChat(chatId: number, updateData: PersonalChatUpdate): Promise<PersonalChat> {
+    const response = await this.client.put<PersonalChat>(`/api/chat/personal/chats/${chatId}`, updateData);
+    return response.data;
+  }
+
+  async deletePersonalChat(chatId: number): Promise<{ message: string }> {
+    const response = await this.client.delete<{ message: string }>(`/api/chat/personal/chats/${chatId}`);
+    return response.data;
+  }
+
+  async getPersonalChatHistory(chatId: number, limit: number = 50): Promise<ChatMessage[]> {
+    const response = await this.client.get<ChatMessage[]>(`/api/chat/personal/chats/${chatId}/history`, {
+      params: { limit }
+    });
+    return response.data;
+  }
+
+  async sendPersonalChatMessage(chatId: number, content: string): Promise<ChatMessage> {
+    const response = await this.client.post<ChatMessage>(`/api/chat/personal/chats/${chatId}/message`, { content });
+    return response.data;
+  }
 }
 
 // Create and export singleton instance
 export const apiClient = new ApiClient();
 
-// Export individual methods for convenience
-export const {
-  login,
-  register,
-  logout,
-  getProfile,
-  updateProfile,
-  getCourses,
-  getPublicCourses,
-  getCourse,
-  getCourseLessons,
-  getLesson,
-  updateLessonProgress,
-  getUserProgress,
-  getChatHistory,
-  sendMessage,
-  createNewThread,
-  uploadFile,
-  createWebSocketConnection,
-  healthCheck,
-} = apiClient;
+// Export individual methods for convenience with proper context binding
+export const login = apiClient.login.bind(apiClient);
+export const register = apiClient.register.bind(apiClient);
+export const logout = apiClient.logout.bind(apiClient);
+export const getProfile = apiClient.getProfile.bind(apiClient);
+export const updateProfile = apiClient.updateProfile.bind(apiClient);
+export const getCourses = apiClient.getCourses.bind(apiClient);
+export const getPublicCourses = apiClient.getPublicCourses.bind(apiClient);
+export const getCourse = apiClient.getCourse.bind(apiClient);
+export const getCourseLessons = apiClient.getCourseLessons.bind(apiClient);
+export const getLesson = apiClient.getLesson.bind(apiClient);
+export const updateLessonProgress = apiClient.updateLessonProgress.bind(apiClient);
+export const getUserProgress = apiClient.getUserProgress.bind(apiClient);
+export const getChatHistory = apiClient.getChatHistory.bind(apiClient);
+export const sendMessage = apiClient.sendMessage.bind(apiClient);
+export const createNewThread = apiClient.createNewThread.bind(apiClient);
+export const getLessonChatHistory = apiClient.getLessonChatHistory.bind(apiClient);
+export const sendLessonMessage = apiClient.sendLessonMessage.bind(apiClient);
+export const getPersonalAssistantHistory = apiClient.getPersonalAssistantHistory.bind(apiClient);
+export const sendPersonalAssistantMessage = apiClient.sendPersonalAssistantMessage.bind(apiClient);
+export const uploadFile = apiClient.uploadFile.bind(apiClient);
+export const createWebSocketConnection = apiClient.createWebSocketConnection.bind(apiClient);
+export const healthCheck = apiClient.healthCheck.bind(apiClient);
+export const testConnection = apiClient.testConnection.bind(apiClient);
+
+// Personal Chats exports
+export const getPersonalChats = apiClient.getPersonalChats.bind(apiClient);
+export const createPersonalChat = apiClient.createPersonalChat.bind(apiClient);
+export const updatePersonalChat = apiClient.updatePersonalChat.bind(apiClient);
+export const deletePersonalChat = apiClient.deletePersonalChat.bind(apiClient);
+export const getPersonalChatHistory = apiClient.getPersonalChatHistory.bind(apiClient);
+export const sendPersonalChatMessage = apiClient.sendPersonalChatMessage.bind(apiClient);
 

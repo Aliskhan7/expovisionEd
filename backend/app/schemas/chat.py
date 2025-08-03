@@ -3,7 +3,7 @@ Chat Pydantic schemas
 """
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 
@@ -14,7 +14,8 @@ class ChatMessageBase(BaseModel):
 
 class ChatMessageCreate(ChatMessageBase):
     """Chat message creation schema"""
-    pass
+    course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
 
 
 class ChatMessageResponse(ChatMessageBase):
@@ -22,7 +23,9 @@ class ChatMessageResponse(ChatMessageBase):
     id: int
     sender: str  # 'user' or 'assistant'
     thread_id: str
-    metadata: Optional[Dict[str, Any]] = None
+    course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
+    message_data: Optional[Dict[str, Any]] = None
     created_at: datetime
     
     class Config:
@@ -32,10 +35,26 @@ class ChatMessageResponse(ChatMessageBase):
 class ChatThreadCreate(BaseModel):
     """Chat thread creation schema"""
     course_id: Optional[int] = None
+    lesson_id: Optional[int] = None
 
 
 class ChatThreadResponse(BaseModel):
     """Chat thread response schema"""
     thread_id: str
     created_at: datetime
+
+
+class LessonChatMessageCreate(BaseModel):
+    """Lesson-specific chat message schema"""
+    content: str
+    lesson_id: int
+    course_id: int
+
+
+class LessonChatHistoryResponse(BaseModel):
+    """Lesson chat history response schema"""
+    messages: List[ChatMessageResponse]
+    lesson_title: str
+    course_title: str
+    total_course_messages: int
 

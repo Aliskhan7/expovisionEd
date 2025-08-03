@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { ChatState, ChatMessage } from '@/types';
-import { apiClient } from '@/lib/api';
+import { 
+  getPersonalAssistantHistory, 
+  sendPersonalAssistantMessage
+} from '@/lib/api';
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
@@ -15,7 +18,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       id: Date.now(), // Temporary ID
       sender: 'user',
       content,
-      thread_id: get().currentThread || '',
+      thread_id: `personal_assistant_user_${Date.now()}`, // Will be replaced
       created_at: new Date().toISOString(),
     };
 
@@ -24,13 +27,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      const response = await apiClient.sendMessage(content);
+      const response = await sendPersonalAssistantMessage(content);
       
       // Replace temporary user message and add assistant response
       set(state => ({
         messages: [
           ...state.messages.filter(m => m.id !== userMessage.id),
-          userMessage,
+          {
+            ...userMessage,
+            id: response.id - 1, // Assume user message is saved right before assistant
+            thread_id: response.thread_id,
+          },
           response,
         ],
         currentThread: response.thread_id,
@@ -49,30 +56,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   loadHistory: async (threadId?: string) => {
     set({ isLoading: true });
     try {
-      const messages = await apiClient.getChatHistory({
-        thread_id: threadId,
-        limit: 50,
-      });
-      
+      const messages = await getPersonalAssistantHistory(50);
       set({
         messages,
         currentThread: threadId || null,
         isLoading: false,
       });
     } catch (error) {
+      console.error('Error loading chat history:', error);
       set({ isLoading: false });
-      throw error;
     }
   },
 
   createNewThread: async () => {
+    // For personal assistant, we don't create new threads
+    // Each user has a static thread ID
     try {
-      const thread = await apiClient.createNewThread();
       set({
         messages: [],
-        currentThread: thread.thread_id,
+        currentThread: null,
       });
     } catch (error) {
+      console.error('Error creating new thread:', error);
       throw error;
     }
   },

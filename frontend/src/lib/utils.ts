@@ -204,7 +204,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 /**
  * Get initials from name
  */
-export function getInitials(name: string): string {
+export function getInitials(name: string | undefined | null): string {
+  if (!name) return 'NN';
   return name
     .split(' ')
     .map(word => word.charAt(0).toUpperCase())
@@ -215,7 +216,7 @@ export function getInitials(name: string): string {
 /**
  * Generate avatar color based on name
  */
-export function getAvatarColor(name: string): string {
+export function getAvatarColor(name: string | undefined | null): string {
   const colors = [
     'bg-red-500',
     'bg-blue-500',
@@ -227,6 +228,7 @@ export function getAvatarColor(name: string): string {
     'bg-teal-500',
   ];
 
+  if (!name) return colors[0];
   const index = name.charCodeAt(0) % colors.length;
   return colors[index];
 }
