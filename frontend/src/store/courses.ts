@@ -26,6 +26,7 @@ interface ExtendedCourseState extends CourseState {
   loadingCourses: Set<number>; // Track which courses are currently being loaded
   loadingLessons: Set<number>; // Track which course lessons are currently being loaded
   fetchCourseLessons: (courseId: number, forceRefresh?: boolean) => Promise<void>;
+  refreshUserProgress: () => Promise<Record<number, CourseProgress>>;
 }
 
 export const useCoursesStore = create<ExtendedCourseState>()(
@@ -261,15 +262,9 @@ export const useCoursesStore = create<ExtendedCourseState>()(
     }
   },
 
-  updateProgress: async (courseId: number, lessonId: number, completed: boolean) => {
+  refreshUserProgress: async () => {
     try {
-      console.log(`Updating progress for lesson ${lessonId} in course ${courseId}: ${completed}`);
-      
-      // Update lesson progress on server
-      await apiClient.updateLessonProgress(lessonId, { completed });
-      
-      // Refresh course lessons to get updated completion status
-      await get().fetchCourseLessons(courseId, true);
+      console.log('Refreshing user progress...');
       
       // Refresh user progress for all courses
       const progress = await apiClient.getUserProgress();
@@ -280,6 +275,26 @@ export const useCoursesStore = create<ExtendedCourseState>()(
 
       console.log('Updated progress map:', progressMap);
       set({ userProgress: progressMap });
+      
+      return progressMap;
+    } catch (error) {
+      console.error('Failed to refresh user progress:', error);
+      throw error;
+    }
+  },
+
+  updateProgress: async (courseId: number, lessonId: number, completed: boolean) => {
+    try {
+      console.log(`Updating progress for lesson ${lessonId} in course ${courseId}: ${completed}`);
+      
+      // Update lesson progress on server
+      await apiClient.updateLessonProgress(lessonId, { completed });
+      
+      // Refresh course lessons to get updated completion status
+      await get().fetchCourseLessons(courseId, true);
+      
+      // Refresh user progress
+      await get().refreshUserProgress();
       
       // Also refresh courses with updated progress data
       await get().fetchCourses(true);

@@ -10,7 +10,7 @@ import ProgressBar from '@/components/ui/ProgressBar';
 import Loading from '@/components/ui/Loading';
 import { useCoursesStore } from '@/store/courses';
 import { useAuthStore } from '@/store/auth';
-import { formatPrice, formatDuration } from '@/lib/utils';
+import { formatPrice, formatMinutes } from '@/lib/utils';
 import { Course } from '@/types';
 
 export default function CoursesPage() {
@@ -207,7 +207,7 @@ export default function CoursesPage() {
                       <div className="flex items-center space-x-1">
                         <Clock className="w-4 h-4" />
                         <span>
-                          {formatDuration(
+                          {formatMinutes(
                             course.lessons?.reduce((total, lesson) => total + (lesson.duration || 0), 0) || 0
                           )}
                         </span>

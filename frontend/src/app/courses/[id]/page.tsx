@@ -19,7 +19,7 @@ function CourseDetail() {
   const params = useParams();
   const router = useRouter();
   const { user, isAuthenticated } = useAuthStore();
-  const { courses, currentCourse, fetchCourse, loading, courseLessons, fetchCourseLessons, userProgress } = useCoursesStore();
+  const { courses, currentCourse, fetchCourse, loading, courseLessons, fetchCourseLessons, userProgress, refreshUserProgress } = useCoursesStore();
   
   const [progress, setProgress] = useState<CourseProgress>({
     completedLessons: 0,
@@ -78,19 +78,25 @@ function CourseDetail() {
     try {
       const courseProgress = userProgress[courseId];
       
-      if (courseProgress && lessons.length > 0) {
-        // Use actual data from backend
+      // Always use lessons.length as the source of truth for total lessons
+      const totalLessons = lessons.length;
+      
+      if (courseProgress && totalLessons > 0) {
+        // Use backend data for completed lessons and percentage, but frontend for total
+        const completedLessons = courseProgress.completed_lessons || 0;
+        const progressPercentage = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+        
         setProgress({
-          completedLessons: courseProgress.completed_lessons || 0,
-          totalLessons: courseProgress.total_lessons || lessons.length,
-          progressPercentage: courseProgress.progress_percentage || 0,
+          completedLessons,
+          totalLessons,
+          progressPercentage,
           lastWatchedLesson: courseProgress.last_lesson_id
         });
       } else {
         // Default progress if no data available
         setProgress({
           completedLessons: 0,
-          totalLessons: lessons.length,
+          totalLessons,
           progressPercentage: 0,
           lastWatchedLesson: undefined
         });
@@ -99,8 +105,9 @@ function CourseDetail() {
       console.log('Progress calculated:', {
         courseId,
         completedLessons: courseProgress?.completed_lessons || 0,
-        totalLessons: courseProgress?.total_lessons || lessons.length,
-        progressPercentage: courseProgress?.progress_percentage || 0
+        totalLessons,
+        progressPercentage: courseProgress && totalLessons > 0 ? Math.round(((courseProgress.completed_lessons || 0) / totalLessons) * 100) : 0,
+        lessonsCount: lessons.length
       });
     } catch (error) {
       console.error('Failed to calculate progress:', error);
@@ -184,12 +191,54 @@ function CourseDetail() {
     }
   };
 
-  const closeLessonModal = () => {
+  const handleLessonProgressUpdate = async () => {
+    try {
+      console.log('Starting lesson progress update...');
+      
+      // Refresh lessons data to get updated completion status
+      await fetchCourseLessons(courseId, true);
+      
+      // Refresh user progress to update the progress bar
+      await refreshUserProgress();
+      
+      // Update selected lesson with fresh data - wait a bit for store to update
+      if (selectedLesson) {
+        // Small delay to ensure store has updated
+        setTimeout(() => {
+          const { courseLessons: updatedCourseLessons } = useCoursesStore.getState();
+          const updatedLessons = updatedCourseLessons[courseId] || [];
+          const updatedLesson = updatedLessons.find(l => l.id === selectedLesson.id);
+          
+          if (updatedLesson) {
+            console.log(`Updating selected lesson ${selectedLesson.id} with fresh data:`, updatedLesson);
+            setSelectedLesson(updatedLesson);
+          } else {
+            console.warn(`Could not find updated lesson ${selectedLesson.id} in lessons list`);
+          }
+        }, 100);
+      }
+      
+      console.log('Lesson progress update completed successfully');
+    } catch (error) {
+      console.error('Failed to refresh data after lesson progress update:', error);
+    }
+  };
+
+  const closeLessonModal = async () => {
     setIsLessonModalOpen(false);
     setSelectedLesson(null);
     
-    // Refresh lessons data to get updated completion status
-    fetchCourseLessons(courseId, true);
+    try {
+      // Refresh lessons data to get updated completion status
+      await fetchCourseLessons(courseId, true);
+      
+      // Refresh user progress to update the progress bar
+      await refreshUserProgress();
+      
+      console.log('Lesson modal closed and data refreshed');
+    } catch (error) {
+      console.error('Failed to refresh data after closing lesson modal:', error);
+    }
   };
 
   const handlePurchaseCourse = () => {
@@ -476,7 +525,7 @@ function CourseDetail() {
                                 </div>
                               </h3>
                               <p className={`text-sm ${isLocked ? 'text-gray-400' : 'text-gray-500'}`}>
-                                {Math.floor((lesson.duration || 0) / 60)} мин
+                                {lesson.duration || 0} мин
                               </p>
                           </div>
                           </div>
@@ -540,6 +589,7 @@ function CourseDetail() {
         lesson={selectedLesson}
         courseTitle={course?.title}
         courseId={courseId}
+        onProgressUpdate={handleLessonProgressUpdate}
       />
     </Layout>
   );

@@ -23,6 +23,19 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format duration in minutes to human readable format
+ */
+export function formatMinutes(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0) {
+    return `${hours}ч ${minutes}м`;
+  }
+  return `${minutes}м`;
+}
+
+/**
  * Format date to human readable format
  */
 export function formatDate(date: string | Date): string {

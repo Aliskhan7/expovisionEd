@@ -16,7 +16,7 @@ class ApiClient {
   constructor() {
     // If NEXT_PUBLIC_API_URL is empty, use relative paths (nginx will proxy)
     // Otherwise use the provided URL (for development)
-    this.baseURL = process.env.NEXT_PUBLIC_API_URL || '';
+    this.baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -308,6 +308,11 @@ class ApiClient {
     return response.data;
   }
 
+  async updateCourse(id: number, courseData: any): Promise<any> {
+    const response = await this.client.put(`/api/admin/courses/${id}`, courseData);
+    return response.data;
+  }
+
   async getCourseLessons(courseId: number): Promise<Lesson[]> {
     const response = await this.client.get<Lesson[]>(`/api/courses/${courseId}/lessons`);
     return response.data;
@@ -390,34 +395,7 @@ class ApiClient {
     return response.data;
   }
 
-  // Course Access Management
-  async grantCourseAccess(userId: number, courseId: number): Promise<any> {
-    const response = await this.client.post('/api/admin/grant-course-access', null, {
-      params: { user_id: userId, course_id: courseId }
-    });
-    return response.data;
-  }
 
-  async revokeCourseAccess(userId: number, courseId: number): Promise<any> {
-    const response = await this.client.delete('/api/admin/revoke-course-access', {
-      params: { user_id: userId, course_id: courseId }
-    });
-    return response.data;
-  }
-
-  async getCourseAccessList(courseId: number): Promise<any[]> {
-    const response = await this.client.get(`/api/admin/course-access/${courseId}`);
-    return response.data;
-  }
-
-  // User Management  
-  async getAllUsers(params?: {
-    skip?: number;
-    limit?: number;
-  }): Promise<User[]> {
-    const response = await this.client.get<User[]>('/api/admin/users', { params });
-    return response.data;
-  }
 
   async getAllCourses(params?: {
     skip?: number;

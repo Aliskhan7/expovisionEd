@@ -224,14 +224,18 @@ async def update_lesson_progress(
         db.add(progress)
     
     # Handle individual lesson progress
+    from datetime import datetime
+    
+    # Get or create lesson progress record
+    lesson_progress = db.query(UserLessonProgress).filter(
+        UserLessonProgress.user_id == current_user.id,
+        UserLessonProgress.lesson_id == lesson_id
+    ).first()
+    
     if progress_data.completed:
-        from datetime import datetime
-        
-        # Get or create lesson progress record
-        lesson_progress = db.query(UserLessonProgress).filter(
-            UserLessonProgress.user_id == current_user.id,
-            UserLessonProgress.lesson_id == lesson_id
-        ).first()
+        # Mark lesson as completed
+        # When lesson is completed, set watched_duration to full lesson duration
+        full_duration = lesson.duration or 0
         
         if not lesson_progress:
             lesson_progress = UserLessonProgress(
@@ -239,33 +243,56 @@ async def update_lesson_progress(
                 lesson_id=lesson_id,
                 course_id=lesson.course_id,
                 completed=True,
-                watched_duration=progress_data.watched_duration,
+                watched_duration=full_duration,
                 completed_at=datetime.utcnow()
             )
             db.add(lesson_progress)
         else:
             lesson_progress.completed = True
-            lesson_progress.watched_duration = progress_data.watched_duration
+            lesson_progress.watched_duration = full_duration
             lesson_progress.completed_at = datetime.utcnow()
         
         # Update course progress
         progress.last_lesson_id = lesson_id
-        
-        # Count actual completed lessons for this course
-        completed_lessons_count = db.query(UserLessonProgress).filter(
-            UserLessonProgress.user_id == current_user.id,
-            UserLessonProgress.course_id == lesson.course_id,
-            UserLessonProgress.completed == True
-        ).count()
-        
-        progress.completed_lessons = completed_lessons_count
-        
-        if progress.total_lessons > 0:
-            progress.progress_percentage = (completed_lessons_count / progress.total_lessons) * 100
-        
-        # Check if course is completed
-        if progress.completed_lessons >= progress.total_lessons:
-            progress.completed_at = datetime.utcnow()
+    else:
+        # Mark lesson as NOT completed (cancel completion)
+        if lesson_progress:
+            lesson_progress.completed = False
+            lesson_progress.completed_at = None
+            # Reset watched_duration when canceling completion
+            lesson_progress.watched_duration = 0
+        else:
+            # Create record as not completed
+            lesson_progress = UserLessonProgress(
+                user_id=current_user.id,
+                lesson_id=lesson_id,
+                course_id=lesson.course_id,
+                completed=False,
+                watched_duration=0,
+                completed_at=None
+            )
+            db.add(lesson_progress)
+    
+    # Flush changes to database before counting
+    db.flush()
+    
+    # Always recalculate course progress after any change
+    completed_lessons_count = db.query(UserLessonProgress).filter(
+        UserLessonProgress.user_id == current_user.id,
+        UserLessonProgress.course_id == lesson.course_id,
+        UserLessonProgress.completed == True
+    ).count()
+    
+    progress.completed_lessons = completed_lessons_count
+    
+    if progress.total_lessons > 0:
+        progress.progress_percentage = (completed_lessons_count / progress.total_lessons) * 100
+    
+    # Check if course is completed or reset completion status
+    if progress.completed_lessons >= progress.total_lessons:
+        progress.completed_at = datetime.utcnow()
+    else:
+        progress.completed_at = None  # Reset course completion if not all lessons completed
     
     db.commit()
     db.refresh(progress)

@@ -60,8 +60,28 @@ function AdminCoursesContent() {
   };
 
   const togglePublishStatus = async (course: Course) => {
-    // TODO: Implement publish/unpublish functionality
-    console.log('Toggle publish status for course:', course.id);
+    try {
+      const newPublishStatus = !course.is_published;
+      
+      // Update course on server
+      await apiClient.updateCourse(course.id, { 
+        is_published: newPublishStatus 
+      });
+      
+      // Update local state
+      setCourses(prevCourses => 
+        prevCourses.map(c => 
+          c.id === course.id 
+            ? { ...c, is_published: newPublishStatus }
+            : c
+        )
+      );
+      
+      console.log(`Course ${course.title} ${newPublishStatus ? 'published' : 'unpublished'} successfully`);
+    } catch (error) {
+      console.error('Failed to toggle course publish status:', error);
+      alert('Не удалось изменить статус публикации курса');
+    }
   };
 
   if (loading) {

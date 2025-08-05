@@ -5,16 +5,74 @@ Users API endpoints
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta, date
 
 from app.core.security import get_current_active_user
 from app.db.database import get_db
 from app.models.user import User
 from app.models.user_course_progress import UserCourseProgress
 from app.models.user_lesson_progress import UserLessonProgress
+from app.models.lesson import Lesson
+from app.models.course import Course
 from app.schemas.user import UserResponse, UserUpdate
 from app.schemas.course import CourseProgress
 
 router = APIRouter()
+
+
+def calculate_learning_streak(db: Session, user_id: int) -> int:
+    """Calculate consecutive days streak where user completed at least one lesson"""
+    
+    # Get all completed lessons from published courses ordered by completion date desc
+    completed_lessons = db.query(UserLessonProgress).join(Lesson).join(Course).filter(
+        UserLessonProgress.user_id == user_id,
+        UserLessonProgress.completed == True,
+        UserLessonProgress.completed_at.isnot(None),
+        Course.is_published == True
+    ).order_by(UserLessonProgress.completed_at.desc()).all()
+    
+    if not completed_lessons:
+        return 0
+    
+    # Get unique dates when user completed lessons (latest first)
+    completion_dates = []
+    seen_dates = set()
+    
+    for lesson in completed_lessons:
+        lesson_date = lesson.completed_at.date()
+        if lesson_date not in seen_dates:
+            completion_dates.append(lesson_date)
+            seen_dates.add(lesson_date)
+    
+    if not completion_dates:
+        return 0
+    
+    # Calculate streak from today backwards
+    today = date.today()
+    current_date = today
+    streak = 0
+    
+    # Check if user has activity today or yesterday (allow 1 day gap)
+    if completion_dates[0] == today:
+        streak = 1
+        current_date = today - timedelta(days=1)
+    elif completion_dates[0] == today - timedelta(days=1):
+        streak = 1
+        current_date = today - timedelta(days=2)
+    else:
+        # No recent activity, no streak
+        return 0
+    
+    # Count consecutive days
+    for completion_date in completion_dates[1:]:
+        if completion_date == current_date:
+            streak += 1
+            current_date -= timedelta(days=1)
+        else:
+            # Gap found, stop counting
+            break
+    
+    return streak
 
 
 @router.get("/profile", response_model=UserResponse)
@@ -74,7 +132,6 @@ async def get_user_courses(
     db: Session = Depends(get_db)
 ):
     """Get courses accessible to the user"""
-    from app.models.course import Course
     
     # Get all published courses
     courses = db.query(Course).filter(Course.is_published == True).all()
@@ -130,14 +187,12 @@ async def get_user_stats(
     db: Session = Depends(get_db)
 ):
     """Get user's learning statistics"""
-    from app.models.course import Course
-    from app.models.lesson import Lesson
     from sqlalchemy import func
-    from datetime import datetime, timedelta
     
-    # Get all user's course progress
-    user_progress = db.query(UserCourseProgress).filter(
-        UserCourseProgress.user_id == current_user.id
+    # Get user's course progress only for published courses
+    user_progress = db.query(UserCourseProgress).join(Course).filter(
+        UserCourseProgress.user_id == current_user.id,
+        Course.is_published == True  # Only count published courses
     ).all()
     
     # Calculate basic stats
@@ -145,17 +200,20 @@ async def get_user_stats(
     completed_courses = len([p for p in user_progress if p.completed_at is not None])
     in_progress_courses = total_courses - completed_courses
     
-    # Calculate total watch time (sum of all progress percentages * course durations)
+    # Calculate total watch time based on completed lessons from published courses only
     total_watch_time_minutes = 0
-    for progress in user_progress:
-        course = db.query(Course).filter(Course.id == progress.course_id).first()
-        if course and course.total_duration:
-            watched_minutes = (float(progress.progress_percentage) / 100) * course.total_duration
-            total_watch_time_minutes += watched_minutes
+    lesson_progress_list = db.query(UserLessonProgress).join(Lesson).join(Course).filter(
+        UserLessonProgress.user_id == current_user.id,
+        UserLessonProgress.completed == True,
+        UserLessonProgress.watched_duration > 0,
+        Course.is_published == True
+    ).all()
     
-    # Calculate learning streak (simplified - count consecutive days with lesson progress)
-    # For now, we'll use a mock value since calculating actual streak requires more complex logic
-    learning_streak = 7  # Mock value
+    for lesson_progress in lesson_progress_list:
+        total_watch_time_minutes += lesson_progress.watched_duration
+    
+    # Calculate learning streak (consecutive days with completed lessons)
+    learning_streak = calculate_learning_streak(db, current_user.id)
     
     # Get completed lessons for certificates calculation
     completed_lessons = db.query(UserLessonProgress).filter(
@@ -183,8 +241,6 @@ async def get_user_courses_with_progress(
     db: Session = Depends(get_db)
 ):
     """Get user's courses with their progress (includes all accessible courses)"""
-    from app.models.course import Course
-    from app.models.lesson import Lesson
     
     # Get all accessible courses for the user
     courses = db.query(Course).filter(Course.is_published == True).all()

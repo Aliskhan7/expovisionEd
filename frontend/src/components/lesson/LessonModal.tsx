@@ -17,9 +17,10 @@ interface LessonModalProps {
   lesson: Lesson | null;
   courseTitle?: string;
   courseId?: number;
+  onProgressUpdate?: () => Promise<void>;
 }
 
-export default function LessonModal({ isOpen, onClose, lesson, courseTitle, courseId }: LessonModalProps) {
+export default function LessonModal({ isOpen, onClose, lesson, courseTitle, courseId, onProgressUpdate }: LessonModalProps) {
   const [isCompleting, setIsCompleting] = React.useState(false);
   const [isCompleted, setIsCompleted] = React.useState(false);
   const [playerError, setPlayerError] = React.useState(false);
@@ -37,13 +38,18 @@ export default function LessonModal({ isOpen, onClose, lesson, courseTitle, cour
     return url.includes('youtube.com') || url.includes('youtu.be');
   };
   
-  // Initialize completion state based on lesson data
+  // Initialize and sync completion state based on lesson data
   React.useEffect(() => {
-    if (isOpen && lesson) {
-      // Check if lesson is already completed from API data
-      setIsCompleted(lesson.is_completed || false);
-      setIsCompleting(false);
-      setPlayerError(false);
+    if (lesson) {
+      const newCompletedState = lesson.is_completed || false;
+      console.log(`Setting lesson ${lesson.id} completion state:`, newCompletedState);
+      setIsCompleted(newCompletedState);
+      
+      // Reset other states when modal opens
+      if (isOpen) {
+        setIsCompleting(false);
+        setPlayerError(false);
+      }
     }
   }, [isOpen, lesson?.id, lesson?.is_completed]);
   
@@ -60,16 +66,22 @@ export default function LessonModal({ isOpen, onClose, lesson, courseTitle, cour
     
     setIsCompleting(true);
     try {
-      await updateProgress(courseId, lesson.id, true);
-      setIsCompleted(true);
+      // Toggle completion status
+      const newCompletedStatus = !isCompleted;
+      console.log(`Toggling lesson ${lesson.id} completion: ${isCompleted} -> ${newCompletedStatus}`);
       
-      // Show success message for a moment, then close
-      setTimeout(() => {
-        onClose();
-      }, 1500);
+      await updateProgress(courseId, lesson.id, newCompletedStatus);
+      setIsCompleted(newCompletedStatus);
+      
+      // Call the progress update callback to refresh data
+      if (onProgressUpdate) {
+        await onProgressUpdate();
+      }
+      
+      console.log(`Lesson ${lesson.id} completion updated successfully`);
     } catch (error) {
-      console.error('Failed to complete lesson:', error);
-      alert('Ошибка при завершении урока. Попробуйте еще раз.');
+      console.error('Failed to update lesson completion:', error);
+      alert('Ошибка при обновлении статуса урока. Попробуйте еще раз.');
     } finally {
       setIsCompleting(false);
     }
@@ -241,30 +253,31 @@ export default function LessonModal({ isOpen, onClose, lesson, courseTitle, cour
 
                     {/* Lesson Navigation */}
                     <div className="space-y-3">
-                      {!isCompleted ? (
-                        <button
-                          onClick={handleCompleteLesson}
-                          disabled={isCompleting}
-                          className="w-full px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                        >
-                          {isCompleting ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                              Завершаем...
-                            </>
-                          ) : (
-                            <>
+                      <button
+                        onClick={handleCompleteLesson}
+                        disabled={isCompleting}
+                        className={`w-full px-4 py-2 text-sm font-medium border border-transparent rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center ${
+                          isCompleted 
+                            ? 'text-green-800 bg-green-100 border-green-200 hover:bg-green-200 focus:ring-green-500' 
+                            : 'text-white bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                        }`}
+                      >
+                        {isCompleting ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+                            {isCompleted ? 'Отменяем...' : 'Завершаем...'}
+                          </>
+                        ) : (
+                          <>
+                            {isCompleted ? (
+                              <X className="w-4 h-4 mr-2" />
+                            ) : (
                               <Check className="w-4 h-4 mr-2" />
-                              Завершить урок
-                            </>
-                          )}
-                        </button>
-                      ) : (
-                        <div className="w-full px-4 py-2 text-sm font-medium text-green-800 bg-green-100 border border-green-200 rounded-md flex items-center justify-center">
-                          <Check className="w-4 h-4 mr-2" />
-                          Урок завершен!
-                        </div>
-                      )}
+                            )}
+                            {isCompleted ? 'Отменить завершение' : 'Завершить урок'}
+                          </>
+                        )}
+                      </button>
                       
                       <button
                         onClick={onClose}
